@@ -1,0 +1,323 @@
+#!/usr/bin/env python
+
+import os
+import pickle
+import time
+import shutil
+import signal
+
+from subprocess import Popen, PIPE, call
+from collections import namedtuple
+from contextlib import contextmanager
+
+def mtime_cmp(a, b):
+    def mtime(x):
+        return os.stat(x).st_mtime
+    return cmp(mtime(a), mtime(b))
+
+Entry = namedtuple('Entry', ['dir', 'name', 'size', 'md5', 'present'])
+
+@contextmanager
+def singals_ignored(sig_list):
+    old_handlers = dict([(signo, signal.signal(signo, signal.SIG_IGN))
+                         for signo in sig_list])
+    yield
+    for signo, handler in old_handlers.items():
+        signal.signal(signo, handler)
+
+class PictureManager:
+    #EXT_LIST = ['.gif', '.jpg', '.jpeg', '.png']
+    EXCL_EXT = ['.ini']
+
+    HomeDir = os.environ['HOME']
+    PicturesDir = os.path.join(HomeDir, 'Pictures')
+    Nexus5Dir = os.path.join(PicturesDir, 'Nexus5_usb')
+    CameraDir = os.path.join(Nexus5Dir, 'DCIM', 'Camera')
+
+    NewDirs = [CameraDir]
+    RepoDirs = [PicturesDir]
+    TopDirs = RepoDirs + NewDirs
+
+    NewRepoDirBase = os.path.join(RepoDirs[0], 'Nexus5')
+    NewRepoDirFormat = '%Y-%m-%d'
+    NewRepoDirSuffix = 'PictureManager-Backup'
+
+    CacheNameBase = '.picture.manager.cache'
+    CacheDir = PicturesDir
+    CacheFormat = '%Y-%m-%d-%H%M%S'
+    UpdateCacheFreq = 60 # in seconds
+
+    def __init__(self):
+        self.files = {}
+        self.md5s = {}
+        self.not_present = []
+        self.new_entries = []
+        self.modified = 0
+        self.only_name = False
+        self.repo_dir = None
+        self.cache_created = False
+        self.cache_save_ts = time.time()
+        self.load_cache()
+
+    def has_ext(self, f, e):
+        uf = f.upper()
+        ue = e.upper()
+        return (ue in uf) and (uf.rindex(ue) == len(f) - len(e))
+
+    def get_md5(self, fn):
+        p = Popen(['md5sum', fn], stdout=PIPE)
+        l = p.stdout.readline()
+        tok = l.split()
+        md5 = tok[0]
+        md5_fn = ' '.join(tok[1:])
+        if md5_fn != fn:
+            msg = 'md5_fn=%s [expected be %s]' % (md5_fn, fn)
+            raise RuntimeError, 'Error: %s' % msg
+        return md5
+
+    def update_md5s(self, t):
+        if t.md5 not in self.md5s:
+            self.md5s[t.md5] = []
+        self.md5s[t.md5].append(t)
+
+    def load_cache(self):
+        try:
+            walk_gen = os.walk(self.CacheDir)
+            curr_dir, dir_names, file_names = walk_gen.next()
+            all_caches = [f for f in file_names
+                          if f.startswith(self.CacheNameBase)]
+            all_caches.sort(cmp=mtime_cmp)
+            cache_name = all_caches[-1]
+            self.cache_name = os.path.join(self.CacheDir, cache_name)
+            cache = open(self.cache_name, 'rb')
+            s = ''.join(cache.readlines())
+            self.files = pickle.loads(s)
+            cache.close()
+        except:
+            pass
+
+        self.total_cache = 0
+        for f, entries in self.files.items():
+            for t in entries:
+                self.total_cache += 1
+                t.present[0] = False
+                self.update_md5s(t)
+
+        if len(self.files) > 0:
+            print 'Loaded %d files from cache [%s]' % (self.total_cache,
+                                                       self.cache_name)
+        else:
+            print 'No cache file used'
+
+    def update_cache(self, force=False):
+        if not self.modified:
+            return
+
+        ts = time.time()
+        if not force and (ts - self.cache_save_ts) < self.UpdateCacheFreq:
+            return
+
+        if not self.cache_created:
+            cache_name = '%s-%s' % (self.CacheNameBase,
+                                    time.strftime(self.CacheFormat))
+        else:
+            cache_name = self.cache_name
+            if not os.path.exists(cache_name):
+                print 'Warning: %s disappeared!' % cache_name
+            else:
+                cache_bak = cache_name + '.bak'
+                if os.path.exists(cache_bak):
+                    os.unlink(cache_bak)
+                print 'Backing up cache: %s' % cache_name
+                shutil.move(cache_name, cache_bak)
+
+        self.cache_name = os.path.join(self.CacheDir, cache_name)
+        try:
+            cache = open(self.cache_name, 'wb')
+            cache.write(pickle.dumps(self.files))
+            cache.close()
+        except KeyboardInterrupt:
+            raise
+
+        self.cache_created = True
+        print 'Entries saved in cache [%s]' % self.cache_name
+
+        self.modified = 0
+        self.cache_save_ts = ts
+
+    def walk_dir(self, top):
+        for curr_dir, dir_names, file_names in os.walk(top):
+            for curr_name in file_names:
+                if not curr_name.startswith(self.CacheNameBase):
+                    self.process_dir_entry(curr_dir, curr_name)
+
+    def process_dir_entry(self, curr_dir, curr_name):
+        ext = None
+        to_excl = [self.has_ext(curr_name, e) for e in self.EXCL_EXT]
+        if True in to_excl:
+            return
+
+        if curr_name not in self.files:
+            self.files[curr_name] = []
+        full_name = os.path.join(curr_dir, curr_name)
+        s = os.stat(full_name)
+        size = s.st_size
+        if size == 0:
+            return
+
+        entries = self.files[curr_name]
+        in_cache = False
+        for t in entries:
+            in_cache = (t.dir == curr_dir)
+            if in_cache:
+                if t.size != size:
+                    msg = '%s size changed: was %d, now is %d' % \
+                          (full_name, t.size, size)
+                    raise RuntimeError, 'Error: %s' % msg
+                t.present[0] = True
+                break
+        if in_cache:
+            return
+        try:
+            md5 = self.get_md5(full_name)
+        except:
+            return
+
+        t = Entry(dir=curr_dir, name=curr_name, size=size, md5=md5,
+                  present=[True])
+        entries.append(t)
+        self.update_md5s(t)
+        self.modified += 1
+        self.update_cache(force=False)
+
+    def walk_top_dirs(self):
+        for top in self.TopDirs:
+            self.walk_dir(top)
+        self.update_cache(force=True)
+
+    def entry_summary(self):
+        self.total_entries = 0
+        for fn, entries in self.files.items():
+            for t in entries:
+                self.total_entries += 1
+                if not t.present[0] and t not in self.not_present:
+                    self.not_present.append(t)
+
+        present_entries = self.total_entries - len(self.not_present)
+        print 'Total entries: %d' % self.total_entries
+        print 'Present entries: %d' % present_entries
+
+    def check_deleted_entries(self):
+        self.entry_summary()
+        deleted = len(self.not_present)
+        if not deleted:
+            return
+        print 'Found %d deleted entries' % deleted
+        for t in self.not_present:
+            full_name = os.path.join(t.dir, t.name)
+            #print 'Deleting %s' % full_name
+            self.files[t.name].remove(t)
+            if not self.files[t.name]:
+                del self.files[t.name]
+            self.md5s[t.md5].remove(t)
+            if not self.md5s[t.md5]:
+                del self.md5s[t.md5]
+            self.modified += 1
+        print '  Deleted %d cache entries' % deleted
+        self.update_cache(force=True)
+
+    def find_new_entries(self):
+        ref_dict = self.files if self.only_name else self.md5s
+        new_entries = []
+        for entries in ref_dict.values():
+            ndirs = [t for nd in self.NewDirs for t in entries
+                     if t.dir.startswith(nd)]
+            if len(ndirs) == len(entries):
+                new_entries.append(ndirs[0])
+        return new_entries
+
+    def backup_new_entries(self, new_entries=None, repo_dir=None):
+        if new_entries is None:
+            new_entries = self.find_new_entries()
+            print 'Found %d new entries' % len(new_entries)
+
+        if repo_dir is None:
+            repo_dir = self.repo_dir
+        if repo_dir is None:
+            new_dir = '%s-%s' % (time.strftime(self.NewRepoDirFormat),
+                                 self.NewRepoDirSuffix)
+            repo_dir = os.path.join(self.NewRepoDirBase, new_dir)
+        if not os.path.exists(repo_dir):
+            print 'Creating %s' % repo_dir
+            os.mkdir(repo_dir)
+        self.repo_dir = repo_dir
+
+        print 'Saving %d new entries to %s' % (len(new_entries), repo_dir)
+        for nt in new_entries:
+            new_name = nt.name
+            repo_name = os.path.join(repo_dir, new_name)
+            for i in range(2, 16):
+                if not os.path.exists(repo_name):
+                    break
+                new_name = '%s_%x' % (nt.name, i)
+                repo_name = os.path.join(repo_dir, new_name)
+            else:
+                msg = 'Too many copies of %s in %s' % (nt.name, repo_dir)
+                raise RuntimeError, msg
+
+            full_name = os.path.join(nt.dir, nt.name)
+
+            cmd = ['cp', '--preserve=timestamps', full_name, repo_name]
+            ret = call(cmd)
+            if ret != 0:
+                raise RuntimeError, 'Comand "%s" failed: %d' % (' '.join(cmd),
+                                                                ret)
+            rt = Entry(dir=repo_dir, name=new_name, size=nt.size, md5=nt.md5,
+                       present=[True])
+            self.files[rt.name].append(rt)
+            self.md5s[rt.md5].append(rt)
+            self.modified = True
+            self.update_cache(force=False)
+        self.update_cache(force=True)
+
+    def find_saved_entries(self):
+        ref_dict = self.files if self.only_name else self.md5s
+        saved_entries = []
+        for entries in ref_dict.values():
+            ndirs = [t for nd in self.NewDirs for t in entries
+                     if t.dir.startswith(nd)]
+            if ndirs and len(ndirs) < len(entries):
+                saved_entries.append(ndirs[0])
+        return saved_entries
+
+    def erase_saved_entries(self, saved_entries=None, new_dirs=None):
+        if saved_entries is None:
+            saved_entries = self.find_saved_entries()
+            print 'Found %d saved entries' % len(saved_entries)
+
+        if new_dirs is None:
+            new_dirs = self.NewDirs
+
+        to_delete = [t
+                     for t in saved_entries for nd in new_dirs
+                     if t.dir.startswith(nd)]
+        print 'Deleting %d saved entries from %s' % (len(to_delete),
+                                                     ','.join(new_dirs))
+        for t in to_delete:
+            full_name = os.path.join(t.dir, t.name)
+            os.unlink(full_name)
+            self.files[t.name].remove(t)
+            self.md5s[t.md5].remove(t)
+            self.modified = True
+            self.update_cache(force=False)
+        self.update_cache(force=True)
+
+def main():
+    manager = PictureManager()
+    manager.walk_top_dirs()
+    manager.check_deleted_entries()
+    manager.backup_new_entries()
+    manager.erase_saved_entries()
+
+if __name__ == '__main__':
+    main()
