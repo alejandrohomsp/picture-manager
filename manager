@@ -10,10 +10,12 @@ from subprocess import Popen, PIPE, call
 from collections import namedtuple
 from contextlib import contextmanager
 
-def mtime_cmp(a, b):
-    def mtime(x):
-        return os.stat(x).st_mtime
-    return cmp(mtime(a), mtime(b))
+def mtime_cmp(basedir):
+    def cmp_funct(a, b):
+        def mtime(x):
+            return os.stat(os.path.join(basedir, x)).st_mtime
+        return cmp(mtime(a), mtime(b))
+    return cmp_funct
 
 Entry = namedtuple('Entry', ['dir', 'name', 'size', 'md5', 'present'])
 
@@ -32,7 +34,7 @@ class PictureManager:
     HomeDir = os.environ['HOME']
     PicturesDir = os.path.join(HomeDir, 'Pictures')
     Nexus5Dir = os.path.join(PicturesDir, 'Nexus5_usb')
-    CameraDir = os.path.join(Nexus5Dir, 'DCIM', 'Camera')
+    CameraDir = os.path.join(Nexus5Dir, 'Internal storage', 'DCIM', 'Camera')
 
     NewDirs = [CameraDir]
     RepoDirs = [PicturesDir]
@@ -86,7 +88,7 @@ class PictureManager:
             curr_dir, dir_names, file_names = walk_gen.next()
             all_caches = [f for f in file_names
                           if f.startswith(self.CacheNameBase)]
-            all_caches.sort(cmp=mtime_cmp)
+            all_caches.sort(cmp=mtime_cmp(self.CacheDir))
             cache_name = all_caches[-1]
             self.cache_name = os.path.join(self.CacheDir, cache_name)
             cache = open(self.cache_name, 'rb')
