@@ -5,10 +5,13 @@ import pickle
 import time
 import shutil
 import signal
+import glob
 
 from subprocess import Popen, PIPE, call
 from collections import namedtuple
 from contextlib import contextmanager
+
+use_nexus_id = True
 
 def mtime_cmp(basedir):
     def cmp_funct(a, b):
@@ -45,7 +48,7 @@ class PictureManager:
     NewRepoDirSuffix = 'PictureManager-Backup'
 
     CacheNameBase = '.picture.manager.cache'
-    CacheDir = PicturesDir
+    CacheDir = os.path.join(PicturesDir, '.manager.cache')
     CacheFormat = '%Y-%m-%d-%H%M%S'
     UpdateCacheFreq = 60 # in seconds
 
@@ -314,7 +317,52 @@ class PictureManager:
             self.update_cache(force=False)
         self.update_cache(force=True)
 
+def get_url_format(s):
+    ctrl = '[]:,'
+    new_s = [x if x not in ctrl else '%%%X' % ord(x) for x in s]
+    return ''.join(new_s)
+
+def get_nexus_id():
+    Google_Vendor = 0x18d1
+    Nexus_ID = 0x4ee1
+    cmd = ['lsusb', '-d', '%x:%x' % (Google_Vendor, Nexus_ID)]
+    lsusb = Popen(cmd, stdout=PIPE)
+    line = lsusb.stdout.readline()
+    line_tok = line.split(':')[0].split()
+    if line_tok[0] != 'Bus' or line_tok[2] != 'Device':
+        raise RuntimeError, 'Invalid lsusb output: %s' % line
+    bus_id, dev_id = line_tok[1], line_tok[3]
+    return bus_id, dev_id
+
+def get_gvfs_str(bus_id, dev_id):
+    gvfs_dir = '/run/user/%d/gvfs' % os.getuid()
+    dev_s = '[usb:%s,%s]' % (bus_id, dev_id)
+    return os.path.join(gvfs_dir, 'mtp:host=' + get_url_format(dev_s))
+
+def prepare_nexus():
+    link = PictureManager.Nexus5Dir
+    if os.path.isdir(link):
+        return
+    if os.path.lexists(link):
+        old_link = os.readlink(link)
+        print 'Removing old %s -> %s' % (link, old_link)
+        os.remove(link)
+    if use_nexus_id:
+        bus_id, dev_id = get_nexus_id()
+        nexus_mount = get_gvfs_str(bus_id, dev_id)
+    else:
+        glob_str = get_gvfs_str('*', '*')
+        nexus_mount_list = glob.glob(glob_str)
+        if len(nexus_mount_list) != 1:
+            raise RuntimeError, 'Found %s' % nexus_mount_list
+        nexus_mount = nexus_mount_list[0]
+    if not os.path.isdir(nexus_mount):
+        raise RuntimeError, 'Did not find Nexus mount: %s' % nexus_mount
+    print "Creating symlink: %s -> %s" % (link, nexus_mount)
+    os.symlink(nexus_mount, link)
+
 def main():
+    prepare_nexus()
     manager = PictureManager()
     manager.walk_top_dirs()
     manager.check_deleted_entries()
