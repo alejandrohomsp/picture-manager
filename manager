@@ -37,13 +37,17 @@ class PictureManager:
     HomeDir = os.environ['HOME']
     PicturesDir = os.path.join(HomeDir, 'Pictures')
     Nexus5Dir = os.path.join(PicturesDir, 'Nexus5_usb')
-    CameraDir = os.path.join(Nexus5Dir, 'Internal storage', 'DCIM', 'Camera')
-
-    NewDirs = [CameraDir]
+    NexusStorage = os.path.join(Nexus5Dir, 'Internal storage')
+    CameraDir = os.path.join(NexusStorage, 'DCIM', 'Camera')
+    WhatsAppDir = os.path.join(NexusStorage, 'WhatsApp', 'Media')
+    
+    NewDirs = {'Pictures': [CameraDir], 'WhatsApp': [WhatsAppDir]}
     RepoDirs = [PicturesDir]
-    TopDirs = RepoDirs + NewDirs
+    TopDirs = RepoDirs + NewDirs['Pictures'] + NewDirs['WhatsApp']
 
-    NewRepoDirBase = os.path.join(RepoDirs[0], 'Nexus5')
+    NewRepoSubDirs = {'Pictures': 'Nexus5', 'WhatsApp': 'WhatsApp'}
+    NewRepoDirBase = dict([(k, os.path.join(RepoDirs[0], v))
+                           for k, v in NewRepoSubDirs.items()])
     NewRepoDirFormat = '%Y-%m-%d'
     NewRepoDirSuffix = 'PictureManager-Backup'
 
@@ -56,10 +60,9 @@ class PictureManager:
         self.files = {}
         self.md5s = {}
         self.not_present = []
-        self.new_entries = []
         self.modified = 0
         self.only_name = False
-        self.repo_dir = None
+        self.repo_dir = {}
         self.cache_created = False
         self.cache_save_ts = time.time()
         self.load_cache()
@@ -231,31 +234,31 @@ class PictureManager:
         print '  Deleted %d cache entries' % deleted
         self.update_cache(force=True)
 
-    def find_new_entries(self):
+    def find_new_entries(self, key):
         ref_dict = self.files if self.only_name else self.md5s
         new_entries = []
         for entries in ref_dict.values():
-            ndirs = [t for nd in self.NewDirs for t in entries
+            ndirs = [t for nd in self.NewDirs[key] for t in entries
                      if t.dir.startswith(nd)]
             if len(ndirs) == len(entries):
                 new_entries.append(ndirs[0])
         return new_entries
 
-    def backup_new_entries(self, new_entries=None, repo_dir=None):
+    def backup_new_entries(self, key, new_entries=None, repo_dir=None):
         if new_entries is None:
-            new_entries = self.find_new_entries()
+            new_entries = self.find_new_entries(key)
             print 'Found %d new entries' % len(new_entries)
 
-        if repo_dir is None:
-            repo_dir = self.repo_dir
+        if repo_dir is None and key in self.repo_dir:
+            repo_dir = self.repo_dir[key]
         if repo_dir is None:
             new_dir = '%s-%s' % (time.strftime(self.NewRepoDirFormat),
                                  self.NewRepoDirSuffix)
-            repo_dir = os.path.join(self.NewRepoDirBase, new_dir)
+            repo_dir = os.path.join(self.NewRepoDirBase[key], new_dir)
         if not os.path.exists(repo_dir):
             print 'Creating %s' % repo_dir
             os.mkdir(repo_dir)
-        self.repo_dir = repo_dir
+        self.repo_dir[key] = repo_dir
 
         print 'Saving %d new entries to %s' % (len(new_entries), repo_dir)
         for nt in new_entries:
@@ -285,23 +288,23 @@ class PictureManager:
             self.update_cache(force=False)
         self.update_cache(force=True)
 
-    def find_saved_entries(self):
+    def find_saved_entries(self, key):
         ref_dict = self.files if self.only_name else self.md5s
         saved_entries = []
         for entries in ref_dict.values():
-            ndirs = [t for nd in self.NewDirs for t in entries
+            ndirs = [t for nd in self.NewDirs[key] for t in entries
                      if t.dir.startswith(nd)]
             if ndirs and len(ndirs) < len(entries):
                 saved_entries.append(ndirs[0])
         return saved_entries
 
-    def erase_saved_entries(self, saved_entries=None, new_dirs=None):
+    def erase_saved_entries(self, key, saved_entries=None, new_dirs=None):
         if saved_entries is None:
-            saved_entries = self.find_saved_entries()
+            saved_entries = self.find_saved_entries(key)
             print 'Found %d saved entries' % len(saved_entries)
 
         if new_dirs is None:
-            new_dirs = self.NewDirs
+            new_dirs = self.NewDirs[key]
 
         to_delete = [t
                      for t in saved_entries for nd in new_dirs
@@ -366,8 +369,9 @@ def main():
     manager = PictureManager()
     manager.walk_top_dirs()
     manager.check_deleted_entries()
-    manager.backup_new_entries()
-    manager.erase_saved_entries()
+    for key in ['Pictures', 'WhatsApp']:
+        manager.backup_new_entries(key)
+        manager.erase_saved_entries(key)
 
 if __name__ == '__main__':
     main()
