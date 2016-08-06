@@ -40,12 +40,16 @@ class PictureManager:
     NexusStorage = os.path.join(Nexus5Dir, 'Internal storage')
     CameraDir = os.path.join(NexusStorage, 'DCIM', 'Camera')
     WhatsAppDir = os.path.join(NexusStorage, 'WhatsApp', 'Media')
+    DownloadDir = os.path.join(NexusStorage, 'Download')
     
-    NewDirs = {'Pictures': [CameraDir], 'WhatsApp': [WhatsAppDir]}
+    NewDirs = {'Pictures': [CameraDir], 'WhatsApp': [WhatsAppDir],
+               'Download': [DownloadDir]}
     RepoDirs = [PicturesDir]
-    TopDirs = RepoDirs + NewDirs['Pictures'] + NewDirs['WhatsApp']
+    TopDirs = RepoDirs + NewDirs['Pictures'] + NewDirs['WhatsApp'] + \
+              NewDirs['Download']
 
-    NewRepoSubDirs = {'Pictures': 'Nexus5', 'WhatsApp': 'WhatsApp'}
+    NewRepoSubDirs = {'Pictures': 'Nexus5', 'WhatsApp': 'WhatsApp',
+                      'Download': 'Nexus5_Download'}
     NewRepoDirBase = dict([(k, os.path.join(RepoDirs[0], v))
                            for k, v in NewRepoSubDirs.items()])
     NewRepoDirFormat = '%Y-%m-%d'
@@ -369,7 +373,7 @@ def main():
     manager = PictureManager()
     manager.walk_top_dirs()
     manager.check_deleted_entries()
-    for key in ['Pictures', 'WhatsApp']:
+    for key in ['Pictures', 'WhatsApp', 'Download']:
         manager.backup_new_entries(key)
         manager.erase_saved_entries(key)
 
