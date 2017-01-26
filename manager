@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from __future__ import print_function
+
 import os
 import pickle
 import time
@@ -116,10 +118,10 @@ class PictureManager:
                 self.update_md5s(t)
 
         if len(self.files) > 0:
-            print 'Loaded %d files from cache [%s]' % (self.total_cache,
-                                                       self.cache_name)
+            print('Loaded %d files from cache [%s]' % (self.total_cache,
+                                                       self.cache_name))
         else:
-            print 'No cache file used'
+            print('No cache file used')
 
     def update_cache(self, force=False):
         if not self.modified:
@@ -135,12 +137,12 @@ class PictureManager:
         else:
             cache_name = self.cache_name
             if not os.path.exists(cache_name):
-                print 'Warning: %s disappeared!' % cache_name
+                print('Warning: %s disappeared!' % cache_name)
             else:
                 cache_bak = cache_name + '.bak'
                 if os.path.exists(cache_bak):
                     os.unlink(cache_bak)
-                print 'Backing up cache: %s' % cache_name
+                print('Backing up cache: %s' % cache_name)
                 shutil.move(cache_name, cache_bak)
 
         self.cache_name = os.path.join(self.CacheDir, cache_name)
@@ -152,7 +154,7 @@ class PictureManager:
             raise
 
         self.cache_created = True
-        print 'Entries saved in cache [%s]' % self.cache_name
+        print('Entries saved in cache [%s]' % self.cache_name)
 
         self.modified = 0
         self.cache_save_ts = ts
@@ -216,18 +218,18 @@ class PictureManager:
                     self.not_present.append(t)
 
         present_entries = self.total_entries - len(self.not_present)
-        print 'Total entries: %d' % self.total_entries
-        print 'Present entries: %d' % present_entries
+        print('Total entries: %d' % self.total_entries)
+        print('Present entries: %d' % present_entries)
 
     def check_deleted_entries(self):
         self.entry_summary()
         deleted = len(self.not_present)
         if not deleted:
             return
-        print 'Found %d deleted entries' % deleted
+        print('Found %d deleted entries' % deleted)
         for t in self.not_present:
             full_name = os.path.join(t.dir, t.name)
-            #print 'Deleting %s' % full_name
+            #print('Deleting %s' % full_name)
             self.files[t.name].remove(t)
             if not self.files[t.name]:
                 del self.files[t.name]
@@ -235,7 +237,7 @@ class PictureManager:
             if not self.md5s[t.md5]:
                 del self.md5s[t.md5]
             self.modified += 1
-        print '  Deleted %d cache entries' % deleted
+        print('  Deleted %d cache entries' % deleted)
         self.update_cache(force=True)
 
     def find_new_entries(self, key):
@@ -251,7 +253,7 @@ class PictureManager:
     def backup_new_entries(self, key, new_entries=None, repo_dir=None):
         if new_entries is None:
             new_entries = self.find_new_entries(key)
-            print 'Found %d new entries' % len(new_entries)
+            print('Found %d new entries' % len(new_entries))
 
         if repo_dir is None and key in self.repo_dir:
             repo_dir = self.repo_dir[key]
@@ -260,11 +262,12 @@ class PictureManager:
                                  self.NewRepoDirSuffix)
             repo_dir = os.path.join(self.NewRepoDirBase[key], new_dir)
         if not os.path.exists(repo_dir):
-            print 'Creating %s' % repo_dir
+            print('Creating %s' % repo_dir)
             os.mkdir(repo_dir)
         self.repo_dir[key] = repo_dir
 
-        print 'Saving %d new entries to %s' % (len(new_entries), repo_dir)
+        nb_entries = len(new_entries)
+        print('Saving %d new entries to %s' % (nb_entries, repo_dir))
         for nt in new_entries:
             new_name = nt.name
             repo_name = os.path.join(repo_dir, new_name)
@@ -305,7 +308,7 @@ class PictureManager:
     def erase_saved_entries(self, key, saved_entries=None, new_dirs=None):
         if saved_entries is None:
             saved_entries = self.find_saved_entries(key)
-            print 'Found %d saved entries' % len(saved_entries)
+            print('Found %d saved entries' % len(saved_entries))
 
         if new_dirs is None:
             new_dirs = self.NewDirs[key]
@@ -313,8 +316,8 @@ class PictureManager:
         to_delete = [t
                      for t in saved_entries for nd in new_dirs
                      if t.dir.startswith(nd)]
-        print 'Deleting %d saved entries from %s' % (len(to_delete),
-                                                     ','.join(new_dirs))
+        print('Deleting %d saved entries from %s' % (len(to_delete),
+                                                     ','.join(new_dirs)))
         for t in to_delete:
             full_name = os.path.join(t.dir, t.name)
             os.unlink(full_name)
@@ -352,7 +355,7 @@ def prepare_nexus():
         return
     if os.path.lexists(link):
         old_link = os.readlink(link)
-        print 'Removing old %s -> %s' % (link, old_link)
+        print('Removing old %s -> %s' % (link, old_link))
         os.remove(link)
     if use_nexus_id:
         bus_id, dev_id = get_nexus_id()
@@ -365,7 +368,7 @@ def prepare_nexus():
         nexus_mount = nexus_mount_list[0]
     if not os.path.isdir(nexus_mount):
         raise RuntimeError, 'Did not find Nexus mount: %s' % nexus_mount
-    print "Creating symlink: %s -> %s" % (link, nexus_mount)
+    print("Creating symlink: %s -> %s" % (link, nexus_mount))
     os.symlink(nexus_mount, link)
 
 def main():
