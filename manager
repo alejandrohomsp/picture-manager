@@ -15,12 +15,20 @@ from contextlib import contextmanager
 
 use_nexus_id = True
 
+STAT_UPDATE_TIME = 20
+
 def mtime_cmp(basedir):
     def cmp_funct(a, b):
         def mtime(x):
             return os.stat(os.path.join(basedir, x)).st_mtime
         return cmp(mtime(a), mtime(b))
     return cmp_funct
+
+def mbytes(x):
+    return float(x) / 1e6
+
+def percent(f, x, t):
+    return 100.0 * x[f] / t[f]
 
 Entry = namedtuple('Entry', ['dir', 'name', 'size', 'md5', 'present'])
 
@@ -269,8 +277,13 @@ class PictureManager:
             os.mkdir(repo_dir)
         self.repo_dir[key] = repo_dir
 
-        nb_entries = len(new_entries)
-        print('Saving %d new entries to %s' % (nb_entries, repo_dir))
+        total = dict(nb=len(new_entries),
+                     size=sum([nt.size for nt in new_entries]))
+
+        print('Saving %d new entries to %s (%.1f MB)' % (total['nb'], repo_dir,
+                                                         mbytes(total['size'])))
+        stat = dict(t=time.time(), nb=0, size=0)
+        last = dict(stat)
         for nt in new_entries:
             new_name = nt.name
             repo_name = os.path.join(repo_dir, new_name)
@@ -296,6 +309,19 @@ class PictureManager:
             self.md5s[rt.md5].append(rt)
             self.modified = True
             self.update_cache(force=False)
+
+            stat['nb'] += 1
+            stat['size'] += nt.size
+            stat['t'] = time.time()
+            dt = stat['t'] - last['t']
+            if dt > STAT_UPDATE_TIME or stat['nb'] == total['nb']:
+                p = dict([(f, percent(f, stat, total)) for f in 'nb', 'size'])
+                speed = mbytes(stat['size'] - last['size']) / dt
+                print("[Copied %d files (%.1f %%), %.1f MB (%.1f %%): "
+                      "%.1f MB/s]" %
+                      (stat['nb'], p['nb'], mbytes(stat['size']), p['size'],
+                       speed))
+                last = dict(stat)
         self.update_cache(force=True)
 
     def find_saved_entries(self, key):
