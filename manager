@@ -38,17 +38,8 @@ class PictureManager:
 
     HomeDir = os.environ['HOME']
     PicturesDir = os.path.join(HomeDir, 'Pictures')
-    Nexus5Dir = os.path.join(PicturesDir, 'Nexus5_usb')
-    NexusStorage = os.path.join(Nexus5Dir, 'Internal storage')
-    CameraDir = os.path.join(NexusStorage, 'DCIM', 'Camera')
-    WhatsAppDir = os.path.join(NexusStorage, 'WhatsApp', 'Media')
-    DownloadDir = os.path.join(NexusStorage, 'Download')
-    
-    NewDirs = {'Pictures': [CameraDir], 'WhatsApp': [WhatsAppDir],
-               'Download': [DownloadDir]}
+
     RepoDirs = [PicturesDir]
-    TopDirs = RepoDirs + NewDirs['Pictures'] + NewDirs['WhatsApp'] + \
-              NewDirs['Download']
 
     NewRepoSubDirs = {'Pictures': 'Nexus5', 'WhatsApp': 'WhatsApp',
                       'Download': 'Nexus5_Download'}
@@ -62,7 +53,8 @@ class PictureManager:
     CacheFormat = '%Y-%m-%d-%H%M%S'
     UpdateCacheFreq = 60 # in seconds
 
-    def __init__(self):
+    def __init__(self, nexus):
+        self.nexus = nexus
         self.files = {}
         self.md5s = {}
         self.not_present = []
@@ -72,6 +64,17 @@ class PictureManager:
         self.cache_created = False
         self.cache_save_ts = time.time()
         self.load_cache()
+
+    @property
+    def NewDirs(self):
+        n = self.nexus
+        return {'Pictures': [n.CameraDir], 'WhatsApp': [n.WhatsAppDir],
+                'Download': [n.DownloadDir]}
+
+    @property
+    def TopDirs(self):
+        return (self.RepoDirs + self.NewDirs['Pictures'] +
+                self.NewDirs['WhatsApp'] + self.NewDirs['Download'])
 
     def has_ext(self, f, e):
         uf = f.upper()
@@ -349,31 +352,55 @@ def get_gvfs_str(bus_id, dev_id):
     dev_s = '[usb:%s,%s]' % (bus_id, dev_id)
     return os.path.join(gvfs_dir, 'mtp:host=' + get_url_format(dev_s))
 
-def prepare_nexus():
-    link = PictureManager.Nexus5Dir
-    if os.path.isdir(link):
-        return
-    if os.path.lexists(link):
-        old_link = os.readlink(link)
-        print('Removing old %s -> %s' % (link, old_link))
-        os.remove(link)
-    if use_nexus_id:
-        bus_id, dev_id = get_nexus_id()
-        nexus_mount = get_gvfs_str(bus_id, dev_id)
-    else:
-        glob_str = get_gvfs_str('*', '*')
-        nexus_mount_list = glob.glob(glob_str)
-        if len(nexus_mount_list) != 1:
-            raise RuntimeError, 'Found %s' % nexus_mount_list
-        nexus_mount = nexus_mount_list[0]
-    if not os.path.isdir(nexus_mount):
-        raise RuntimeError, 'Did not find Nexus mount: %s' % nexus_mount
-    print("Creating symlink: %s -> %s" % (link, nexus_mount))
-    os.symlink(nexus_mount, link)
+class Nexus:
+
+    Nexus5Dir = os.path.join(PictureManager.PicturesDir, 'Nexus5_usb')
+
+    def __init__(self):
+        link = self.Nexus5Dir
+        if os.path.isdir(link):
+            return
+        if os.path.lexists(link):
+            old_link = os.readlink(link)
+            print('Removing old %s -> %s' % (link, old_link))
+            os.remove(link)
+        if use_nexus_id:
+            bus_id, dev_id = get_nexus_id()
+            nexus_mount = get_gvfs_str(bus_id, dev_id)
+        else:
+            glob_str = get_gvfs_str('*', '*')
+            nexus_mount_list = glob.glob(glob_str)
+            if len(nexus_mount_list) != 1:
+                raise RuntimeError, 'Found %s' % nexus_mount_list
+            nexus_mount = nexus_mount_list[0]
+        if not os.path.isdir(nexus_mount):
+            raise RuntimeError, 'Did not find Nexus mount: %s' % nexus_mount
+        print("Creating symlink: %s -> %s" % (link, nexus_mount))
+        os.symlink(nexus_mount, link)
+
+    @property
+    def NexusStorage(self):
+        for d in 'Internal storage', 'Almacenamiento interno':
+            s = os.path.join(self.Nexus5Dir, d)
+            if os.path.exists(s):
+                return s
+        raise RuntimeError, 'Could not find NexusStorage'
+
+    @property
+    def CameraDir(self):
+        return os.path.join(self.NexusStorage, 'DCIM', 'Camera')
+
+    @property
+    def WhatsAppDir(self):
+        return os.path.join(self.NexusStorage, 'WhatsApp', 'Media')
+
+    @property
+    def DownloadDir(self):
+        return os.path.join(self.NexusStorage, 'Download')
 
 def main():
-    prepare_nexus()
-    manager = PictureManager()
+    nexus = Nexus()
+    manager = PictureManager(nexus)
     manager.walk_top_dirs()
     manager.check_deleted_entries()
     for key in ['Pictures', 'WhatsApp', 'Download']:
